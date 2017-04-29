@@ -81,6 +81,9 @@ class _Configuration(object):
             with open(filename, 'w') as f:
                 json.dump(self.config, f)
 
+    def keys(self):
+        return set(self.config)
+
 def make_date_str():
     return datetime.now().strftime('%Y%m%d%H%M%S')
 
@@ -407,6 +410,9 @@ def get_config_path():
     raise PyPKI2Exception('Could not find MYPKI_CONFIG or HOME environment variables.  If you are on Windows, you need to add a MYPKI_CONFIG environment variable in Control Panel.  See Windows Configuration in README.md for further instructions.')
 
 class _Loader(object):
+    __loaders_map = {'pem': _PEMLoader,
+                     'p12': _P12Loader}
+
     def __init__(self):
         self.config_path = get_config_path()
         self.ipython_config()
@@ -433,7 +439,7 @@ class _Loader(object):
     def prepare_loader(self):
         if self.loader is None:
             self.config = _Configuration(self.config_path)
-            loaders = [ _P12Loader, _PEMLoader ]
+            loaders = self._loader_lst(self.config)
 
             for loader in loaders:
                 evaluated_loader = loader(self.config)
@@ -447,6 +453,33 @@ class _Loader(object):
 
             self.ca_loader = _CALoader(self.config)
             self.config.store(self.config_path)
+
+    def _loader_lst(self, config):
+        def only_loader_key(config, keys):
+            """If the config only has one of the loaders in keys, return that
+            key.  Otherwise return None"""
+            intersect = config.keys() & set(keys)
+            if len(intersect) == 1:
+                return intersect.pop()
+            return None
+
+        loaders = list(self.__loaders_map.values())
+        default = None
+        if config.has('default'):
+            default = config.get('default').lower()
+        else:
+            # If only one loader is configured, try that one first
+            default = only_loader_key(config, self.__loaders_map.keys())
+
+        default_loader = self.__loaders_map.get(default, None)
+        if default_loader is not None:
+            try:
+                loaders.remove(default_loader)
+            except ValueError as e:
+                pass  # value not in loaders
+            loaders.insert(0, default_loader)
+
+        return loaders
 
     def new_context(self, protocol=ssl.PROTOCOL_SSLv23):
         self.prepare_loader()
