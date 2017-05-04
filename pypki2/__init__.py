@@ -87,6 +87,21 @@ class _Configuration(object):
 def make_date_str():
     return datetime.now().strftime('%Y%m%d%H%M%S')
 
+def has_password(load_function):
+    password = None
+    if sys.version_info.major == 3:
+        password = bytes()
+    elif sys.version_info.major == 2:
+        password = ''
+    else:
+        raise PyPKI2Exception('Unknown version of Python.')
+
+    try:
+        load_function(password)
+    except OpenSSL.crypto.Error as e:
+        return True
+    return False
+
 def confirm_password(input_function, load_function):
     password = None
 
@@ -105,15 +120,6 @@ def confirm_password(input_function, load_function):
     return password
 
 
-def get_password_or_nopass(filename, config):
-    """Prompt the user for a password for an already configured cert.
-    If the user's config specifies 'nopass', then just return None"""
-
-    if 'nopass' not in config or config['nopass'].lower() != 'true':
-        return get_password(filename)
-    return None
-
-
 def get_password(filename):
     if sys.version_info.major == 3:
         return bytes(getpass('PKI password for {0}: '.format(filename)), encoding='utf-8')
@@ -121,21 +127,6 @@ def get_password(filename):
         return getpass('PKI password for {0}: '.format(filename))
     else:
         raise PyPKI2Exception('Unknown version of Python.')
-
-
-def create_loader_config(path, passwd=None):
-    """Create a loader configuration
-
-    Arguments:
-    path -- the path to the certificate file
-    passwd -- the password entered by the user. (This should not be stored.
-              In this case it is passed in to check for an empty password,
-              and not stored)
-    """
-
-    nopass = passwd is None or len(passwd) == 0
-    return {'path': path,
-            'nopass': str(nopass).lower()}
 
 
 def get_cert_path(prompt):
@@ -215,11 +206,11 @@ class _P12Loader(object):
         if self.config.has('p12') and 'path' in self.config.get('p12') and _openssl_support:
             self.filename = self.config.get('p12')['path']
 
-            input_func = partial(get_password_or_nopass,
-                                 self.filename,
-                                 self.config.get('p12'))
+            input_func = partial(get_password,
+                                 self.filename)
             load_func = partial(_load_p12, self.filename)
-            self.password = confirm_password(input_func, load_func)
+            if has_password(load_func):
+                self.password = confirm_password(input_func, load_func)
             self.complete = True
 
         # no .p12 info in .mypki
@@ -229,8 +220,7 @@ class _P12Loader(object):
             input_func = partial(get_password, self.filename)
             load_func = partial(_load_p12, self.filename)
             self.password = confirm_password(input_func, load_func)
-            config = create_loader_config(self.filename, self.password)
-            self.config.set('p12', config)
+            self.config.set('p12', {'path': self.filename})
             self.complete = True
 
         else:
@@ -272,11 +262,11 @@ class _PEMLoader(object):
         if self.config.has('pem') and 'path' in self.config.get('pem'):
             self.filename = self._combine_pem_files(self.config.get('pem'))
 
-            input_func = partial(get_password_or_nopass,
-                                 self.filename,
-                                 self.config.get('pem'))
+            input_func = partial(get_password,
+                                 self.filename)
             load_func = partial(_load_pem, self.filename)
-            self.password = confirm_password(input_func, load_func)
+            if has_password(load_func):
+                self.password = confirm_password(input_func, load_func)
             self.complete = True
 
         # no .pem info in .mypki
@@ -286,8 +276,7 @@ class _PEMLoader(object):
             input_func = partial(get_password, self.filename)
             load_func = partial(_load_pem, self.filename)
             self.password = confirm_password(input_func, load_func)
-            config = create_loader_config(self.filename, self.password)
-            self.config.set('pem', config)
+            self.config.set('pem', {'path': self.filename})
             self.complete = True
 
     def new_context(self, protocol=ssl.PROTOCOL_SSLv23):
